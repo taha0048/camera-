@@ -1,45 +1,66 @@
-import { useState, useCallback, useRef } from 'react';
-import { Point, Stroke, BrushType } from '../types';
+import { useState, useCallback } from 'react';
+import { Point, Stroke, BrushType, BrushSettings } from '../types';
+
+const DEFAULT_SETTINGS: BrushSettings = {
+  color: '#FFFFFF',
+  size: 10,
+  opacity: 1,
+  brushType: BrushType.PEN,
+  emoji: '✨',
+  isEraser: false,
+};
 
 export function useDrawing() {
   const [history, setHistory] = useState<Stroke[]>([]);
   const [redoStack, setRedoStack] = useState<Stroke[]>([]);
-  const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
+  const [currentStrokes, setCurrentStrokes] = useState<(Stroke | null)[]>([null, null]);
   
-  const [color, setColor] = useState('#FFFFFF');
-  const [size, setSize] = useState(10);
-  const [opacity, setOpacity] = useState(1);
-  const [brushType, setBrushType] = useState<BrushType>(BrushType.PEN);
-  const [isEraser, setIsEraser] = useState(false);
+  const [leftSettings, setLeftSettings] = useState<BrushSettings>(DEFAULT_SETTINGS);
+  const [rightSettings, setRightSettings] = useState<BrushSettings>({ ...DEFAULT_SETTINGS, color: '#FF5555' });
 
-  const startStroke = useCallback((point: Point) => {
-    setCurrentStroke({
-      points: [point],
-      color,
-      size,
-      opacity,
-      brushType,
-      isEraser,
-    });
-  }, [color, size, opacity, brushType, isEraser]);
-
-  const moveStroke = useCallback((point: Point) => {
-    if (!currentStroke) return;
-    setCurrentStroke(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        points: [...prev.points, point],
+  const startStroke = useCallback((point: Point, handIndex: number = 0, isRightHand: boolean = true) => {
+    const settings = isRightHand ? rightSettings : leftSettings;
+    
+    setCurrentStrokes(prev => {
+      const next = [...prev];
+      next[handIndex] = {
+        points: [point],
+        color: settings.color,
+        size: settings.size,
+        opacity: settings.opacity,
+        brushType: settings.brushType,
+        isEraser: settings.isEraser,
+        emoji: settings.brushType === BrushType.EMOJI ? settings.emoji : undefined,
       };
+      return next;
     });
-  }, [currentStroke]);
+  }, [leftSettings, rightSettings]);
 
-  const endStroke = useCallback(() => {
-    if (!currentStroke) return;
-    setHistory(prev => [...prev, currentStroke]);
-    setRedoStack([]);
-    setCurrentStroke(null);
-  }, [currentStroke]);
+  const moveStroke = useCallback((point: Point, handIndex: number = 0) => {
+    setCurrentStrokes(prev => {
+      if (!prev[handIndex]) return prev;
+      const next = [...prev];
+      const stroke = next[handIndex]!;
+      next[handIndex] = {
+        ...stroke,
+        points: [...stroke.points, point],
+      };
+      return next;
+    });
+  }, []);
+
+  const endStroke = useCallback((handIndex: number = 0) => {
+    setCurrentStrokes(prev => {
+      const stroke = prev[handIndex];
+      if (stroke) {
+        setHistory(h => [...h, stroke]);
+        setRedoStack([]);
+      }
+      const next = [...prev];
+      next[handIndex] = null;
+      return next;
+    });
+  }, []);
 
   const undo = useCallback(() => {
     if (history.length === 0) return;
@@ -62,7 +83,7 @@ export function useDrawing() {
 
   return {
     history,
-    currentStroke,
+    currentStrokes,
     startStroke,
     moveStroke,
     endStroke,
@@ -71,12 +92,10 @@ export function useDrawing() {
     clear,
     canUndo: history.length > 0,
     canRedo: redoStack.length > 0,
-    brushSettings: {
-      color, setColor,
-      size, setSize,
-      opacity, setOpacity,
-      brushType, setBrushType,
-      isEraser, setIsEraser,
+    brushSettings: { left: leftSettings, right: rightSettings },
+    setBrushSettings: {
+      left: setLeftSettings,
+      right: setRightSettings
     }
   };
 }

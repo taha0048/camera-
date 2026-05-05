@@ -1,6 +1,6 @@
 {
   "name": "Lumina Canvas",
-  "description": "A high-end, immersive camera drawing experience with professional-grade stroke smoothing and glassmorphic UI.",
+  "description": "An immersive neural-augmented drawing canvas featuring dual-hand gesture tracking, neon/emoji brushes, and glassmorphic spatial controls.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["camera", "drawing"]
 }

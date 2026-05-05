@@ -6,10 +6,17 @@ export interface HandPoint {
   y: number;
 }
 
-export interface HandTrackingState {
+export interface PointerState extends HandPoint {
   isPinching: boolean;
-  pointer: HandPoint | null;
+  handedness: 'Left' | 'Right';
+}
+
+export interface HandTrackingState {
+  isPinching: boolean; // Legacy
+  pointer: HandPoint | null; // Legacy
+  pointers: PointerState[];
   landmarks: any[] | null;
+  allLandmarks: any[][] | null;
   isLoading: boolean;
   error: string | null;
 }
@@ -19,15 +26,17 @@ export function useHandTracking(videoRef: React.RefObject<HTMLVideoElement | nul
   const [state, setState] = useState<HandTrackingState>({
     isPinching: false,
     pointer: null,
+    pointers: [],
     landmarks: null,
+    allLandmarks: null,
     isLoading: true,
     error: null,
   });
   const requestRef = useRef<number>(null);
   const lastVideoTimeRef = useRef<number>(-1);
-  const smoothedPointer = useRef<HandPoint | null>(null);
-  const SMOOTHING_FACTOR = 0.8; // Higher = more responsive (less smoothing)
-  const PINCH_THRESHOLD = 0.06; // Slightly more relaxed threshold
+  const smoothedPointers = useRef<(HandPoint | null)[]>([null, null]);
+  const SMOOTHING_FACTOR = 0.7;
+  const PINCH_THRESHOLD = 0.1;
 
   // Initialize HandLandmarker
   useEffect(() => {
@@ -46,25 +55,27 @@ export function useHandTracking(videoRef: React.RefObject<HTMLVideoElement | nul
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
         );
-        console.log("FilesetResolver loaded");
         
         const options: any = {
           baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/latest/hand_landmarker.task",
           },
           runningMode: "VIDEO",
-          numHands: 1
+          numHands: 2,
+          minHandDetectionConfidence: 0.4,
+          minHandPresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4
         };
 
         try {
           landmarkerInstance = await HandLandmarker.createFromOptions(vision, options);
-          console.log("HandLandmarker created with versioned model");
+          console.log("HandLandmarker created successfully");
         } catch (err) {
-          console.error("Failed to create HandLandmarker with versioned model:", err);
-          // Try another fallback path
-          options.baseOptions.modelAssetPath = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+          console.warn("Primary model/delegate failed, trying fallback:", err);
+          options.baseOptions.modelAssetPath = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+          options.baseOptions.delegate = "CPU";
           landmarkerInstance = await HandLandmarker.createFromOptions(vision, options);
-          console.log("HandLandmarker created with latest-float16 fallback");
+          console.log("HandLandmarker created with CPU fallback");
         }
         
         if (isCancelled) {
@@ -108,57 +119,100 @@ export function useHandTracking(videoRef: React.RefObject<HTMLVideoElement | nul
     try {
       if (video.currentTime !== lastVideoTimeRef.current) {
         lastVideoTimeRef.current = video.currentTime;
-        const startTimeMs = performance.now();
-        const results = handLandmarker.detectForVideo(video, startTimeMs);
+        // Use video frame timestamp for better accuracy
+        const results = handLandmarker.detectForVideo(video, video.currentTime * 1000);
+        
+        // Periodic logging for status
+        if (Math.random() < 0.05) {
+          if (results.landmarks && results.landmarks.length > 0) {
+            console.log(`HANDS DETECTED: ${results.landmarks.length}`);
+          } else {
+            console.log("DETECTOR ACTIVE - No hand in view");
+          }
+        }
+        
         processResults(results);
       }
       requestRef.current = requestAnimationFrame(detectHand);
     } catch (err) {
       console.error("Hand detection runtime error:", err);
-      // Restart loop after error
       requestRef.current = requestAnimationFrame(detectHand);
     }
   }, [handLandmarker, videoRef, isActive]);
 
   const processResults = (results: HandLandmarkerResult) => {
     if (results.landmarks && results.landmarks.length > 0) {
-      const landmarks = results.landmarks[0];
+      const activePointers: PointerState[] = [];
+      const firstHandLandmarks = results.landmarks[0];
       
-      const indexTip = landmarks[8];
-      const thumbTip = landmarks[4];
-      
-      const dx = indexTip.x - thumbTip.x;
-      const dy = indexTip.y - thumbTip.y;
-      const dz = indexTip.z - thumbTip.z;
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      
-      const isPinching = distance < PINCH_THRESHOLD;
-      
-      const rawX = indexTip.x;
-      const rawY = indexTip.y;
-      
-      if (!smoothedPointer.current) {
-        smoothedPointer.current = { x: rawX, y: rawY };
-      } else {
-        smoothedPointer.current = {
-          x: smoothedPointer.current.x * (1 - SMOOTHING_FACTOR) + rawX * SMOOTHING_FACTOR,
-          y: smoothedPointer.current.y * (1 - SMOOTHING_FACTOR) + rawY * SMOOTHING_FACTOR,
-        };
+      // Update smoothing for each detected hand
+      results.landmarks.forEach((landmarks, index) => {
+        if (index > 1) return; // Only track up to 2 hands for now
+
+        const indexTip = landmarks[8];
+        const thumbTip = landmarks[4];
+        
+        const dx = indexTip.x - thumbTip.x;
+        const dy = indexTip.y - thumbTip.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const isPinching = distance < PINCH_THRESHOLD;
+
+        const rawX = indexTip.x;
+        const rawY = indexTip.y;
+
+        if (!smoothedPointers.current[index]) {
+          smoothedPointers.current[index] = { x: rawX, y: rawY };
+        } else {
+          const current = smoothedPointers.current[index]!;
+          smoothedPointers.current[index] = {
+            x: current.x * (1 - SMOOTHING_FACTOR) + rawX * SMOOTHING_FACTOR,
+            y: current.y * (1 - SMOOTHING_FACTOR) + rawY * SMOOTHING_FACTOR,
+          };
+        }
+
+        const handedness = results.handedness[index]?.[0]?.categoryName as 'Left' | 'Right' || 'Right';
+
+        activePointers.push({
+          x: smoothedPointers.current[index]!.x,
+          y: smoothedPointers.current[index]!.y,
+          isPinching,
+          handedness
+        });
+      });
+
+      // Clear gesture logic
+      if (results.landmarks.length >= 2) {
+        const h1 = results.landmarks[0][8]; // index tip 1
+        const h2 = results.landmarks[1][8]; // index tip 2
+        
+        const proximity = Math.sqrt(
+          Math.pow(h1.x - h2.x, 2) + 
+          Math.pow(h1.y - h2.y, 2)
+        );
+
+        // Clear if tips are very close
+        if (proximity < 0.08) {
+          window.dispatchEvent(new CustomEvent('hand-clear-gesture'));
+        }
       }
-      
+
       setState({
-        isPinching,
-        pointer: { x: smoothedPointer.current.x, y: smoothedPointer.current.y },
-        landmarks: landmarks,
+        isPinching: activePointers[0].isPinching,
+        pointer: { x: activePointers[0].x, y: activePointers[0].y },
+        pointers: activePointers,
+        landmarks: firstHandLandmarks,
+        allLandmarks: results.landmarks,
         isLoading: false,
         error: null,
       });
     } else {
-      smoothedPointer.current = null;
+      smoothedPointers.current = [null, null];
       setState({
         isPinching: false,
         pointer: null,
+        pointers: [],
         landmarks: null,
+        allLandmarks: null,
         isLoading: false,
         error: state.error,
       });

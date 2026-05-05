@@ -3,11 +3,11 @@ import { getStroke } from 'perfect-freehand';
 import { Point, Stroke, BrushType } from '../types';
 
 interface DrawingLayerProps {
-  currentStroke: Stroke | null;
+  currentStrokes: (Stroke | null)[];
   history: Stroke[];
-  onStrokeStart: (point: Point) => void;
-  onStrokeMove: (point: Point) => void;
-  onStrokeEnd: () => void;
+  onStrokeStart: (point: Point, handIndex?: number, customBrush?: Partial<Stroke>) => void;
+  onStrokeMove: (point: Point, handIndex?: number) => void;
+  onStrokeEnd: (handIndex?: number) => void;
   isCameraVisible: boolean;
 }
 
@@ -16,7 +16,7 @@ export interface DrawingLayerHandle {
 }
 
 const DrawingLayer = forwardRef<DrawingLayerHandle, DrawingLayerProps>(({
-  currentStroke,
+  currentStrokes,
   history,
   onStrokeStart,
   onStrokeMove,
@@ -42,16 +42,67 @@ const DrawingLayer = forwardRef<DrawingLayerHandle, DrawingLayerProps>(({
   };
 
   const drawStroke = useCallback((ctx: CanvasRenderingContext2D, stroke: Stroke) => {
+    if (stroke.brushType === BrushType.EMOJI && stroke.emoji) {
+      ctx.save();
+      ctx.font = `${stroke.size * 1.5}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.globalAlpha = stroke.opacity;
+      
+      let lastPoint = stroke.points[0];
+      ctx.fillText(stroke.emoji, lastPoint.x, lastPoint.y);
+      
+      const minDistance = stroke.size * 1.5;
+      for (let i = 1; i < stroke.points.length; i++) {
+        const p = stroke.points[i];
+        const dist = Math.sqrt(Math.pow(p.x - lastPoint.x, 2) + Math.pow(p.y - lastPoint.y, 2));
+        if (dist > minDistance) {
+          ctx.fillText(stroke.emoji, p.x, p.y);
+          lastPoint = p;
+        }
+      }
+      ctx.restore();
+      return;
+    }
+
     const rawPoints = stroke.points.map(p => [p.x, p.y, p.pressure]);
-    const outlinePoints = getStroke(rawPoints, {
+    const options: any = {
       size: stroke.size,
-      thinning: stroke.brushType === BrushType.PEN ? 0.5 : 0,
+      thinning: 0.5,
       smoothing: 0.5,
       streamline: 0.5,
-      easing: (t) => t,
       simulatePressure: true,
+      easing: (t: number) => t,
       last: true,
-    });
+    };
+
+    // Fine-tune based on brush type for a professional feel
+    switch (stroke.brushType) {
+      case BrushType.PEN:
+        options.thinning = 0.7;
+        options.streamline = 0.65;
+        options.smoothing = 0.6;
+        options.start = { taper: true, cap: true };
+        options.end = { taper: true, cap: true };
+        break;
+      case BrushType.MARKER:
+        options.thinning = 0.2;
+        options.streamline = 0.5;
+        options.smoothing = 0.5;
+        break;
+      case BrushType.NEON:
+        options.thinning = 0.4;
+        options.streamline = 0.7;
+        options.smoothing = 0.6;
+        break;
+      case BrushType.CHALK:
+        options.thinning = 0.3;
+        options.streamline = 0.4;
+        options.smoothing = 0.4;
+        break;
+    }
+
+    const outlinePoints = getStroke(rawPoints, options);
 
     const pathData = getSvgPathFromStroke(outlinePoints);
     const path = new Path2D(pathData);
@@ -88,11 +139,11 @@ const DrawingLayer = forwardRef<DrawingLayerHandle, DrawingLayerProps>(({
     // Draw history
     history.forEach(stroke => drawStroke(ctx, stroke));
 
-    // Draw current stroke
-    if (currentStroke) {
-      drawStroke(ctx, currentStroke);
-    }
-  }, [history, currentStroke, drawStroke]);
+    // Draw current strokes
+    currentStrokes.forEach(stroke => {
+      if (stroke) drawStroke(ctx, stroke);
+    });
+  }, [history, currentStrokes, drawStroke]);
 
   // Handle resizing
   useEffect(() => {
@@ -134,11 +185,11 @@ const DrawingLayer = forwardRef<DrawingLayerHandle, DrawingLayerProps>(({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
       pressure: e.pressure || 0.5,
-    });
+    }, 0);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!currentStroke) return;
+    if (!currentStrokes[0]) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
@@ -146,13 +197,15 @@ const DrawingLayer = forwardRef<DrawingLayerHandle, DrawingLayerProps>(({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
       pressure: e.pressure || 0.5,
-    });
+    }, 0);
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    onStrokeEnd();
+    onStrokeEnd(0);
   };
+
+  const isDrawing = currentStrokes.some(s => s !== null);
 
   return (
     <div 
@@ -165,7 +218,7 @@ const DrawingLayer = forwardRef<DrawingLayerHandle, DrawingLayerProps>(({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         className="block"
-        style={{ cursor: currentStroke ? 'crosshair' : 'default' }}
+        style={{ cursor: isDrawing ? 'crosshair' : 'default' }}
       />
     </div>
   );
