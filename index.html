@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lumina Canvas</title>
+    <script>
+      // More robust fetch protection
+      (function() {
+        var _originalFetch = window.fetch;
+        try {
+          // Some environments/polyfills try to overwrite fetch. 
+          // We define a property with a setter to prevent crashes if it's protected.
+          Object.defineProperty(window, 'fetch', {
+            get: function() { return _originalFetch; },
+            set: function(v) { 
+              console.warn('Blocked fetch overwrite attempt');
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          // Fallback if property is already strictly non-configurable
+          console.warn('Note: fetch property is immutable');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

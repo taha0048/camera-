@@ -1,0 +1,6 @@
+{
+  "name": "Lumina Canvas",
+  "description": "A high-end, immersive camera drawing experience with professional-grade stroke smoothing and glassmorphic UI.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["camera", "drawing"]
+}
